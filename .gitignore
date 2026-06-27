@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.env
+# Local data lake (Parquet) — never commit fetched/synthetic data
+data/*.parquet
+data/**/*.parquet
+data/raw/
+data/synthetic/
+reports/
+*.png
