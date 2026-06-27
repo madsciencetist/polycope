@@ -105,11 +105,14 @@ class PolymarketClient:
     async def positions(self, wallet: str, **extra: Any) -> list[dict]:
         return await self._get(self.cfg.data_api, "/v1/positions", user=wallet, **extra)
 
+    # Data API rejects offset > 3000 with 400.
+    _TRADES_MAX_OFFSET = 3000
+
     async def all_trades(self, wallet: str, page: int = 500, hard_cap: int = 50_000) -> list[dict]:
         """Page through a wallet's full trade history via offset pagination."""
         out: list[dict] = []
         offset = 0
-        while len(out) < hard_cap:
+        while len(out) < hard_cap and offset <= self._TRADES_MAX_OFFSET:
             batch = await self.trades(wallet, limit=page, offset=offset)
             if not batch:
                 break
