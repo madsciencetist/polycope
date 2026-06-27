@@ -80,7 +80,7 @@ def rank_traders(metrics: pd.DataFrame, min_bets: int = 1) -> pd.DataFrame:
     `eligible=False` so callers can require a minimum track record).
     """
     if metrics.empty:
-        return metrics.assign(eb_edge=[], eb_edge_se=[], eb_hit=[], brier_skill=[], rank=[])
+        return metrics.assign(eb_edge=[], eb_edge_se=[], eb_hit=[], brier_skill=[], eligible=[], rank=[])
 
     m = metrics.copy()
     shrunk, se, grand, _ = eb_gaussian_shrink(
