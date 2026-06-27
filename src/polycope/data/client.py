@@ -4,11 +4,11 @@ Read endpoints require no authentication. We add bounded concurrency, timeouts,
 and retry-with-backoff so bulk ingestion is polite and resilient.
 
 Endpoints used (see docs https://docs.polymarket.com/api-reference):
-  Data API  /leaderboard          population of candidate wallets
-            /trades?user=0x...     per-wallet fills (max 500/page, recent-first)
-            /activity?user=...     full chronological history, timestamp-paginated
-            /positions?user=...    current positions (used by the live executor)
-  Gamma API /markets               market metadata + resolution outcomes (labels)
+  Data API  /v1/leaderboard          population of candidate wallets
+            /v1/trades?user=0x...    per-wallet fills (max 500/page, recent-first)
+            /v1/activity?user=...    full chronological history, timestamp-paginated
+            /v1/positions?user=...   current positions (used by the live executor)
+  Gamma API /markets                 market metadata + resolution outcomes (labels)
 """
 
 from __future__ import annotations
@@ -77,11 +77,11 @@ class PolymarketClient:
     # ---- Data API ----
     async def leaderboard(self, limit: int = 100, offset: int = 0, **extra: Any) -> list[dict]:
         """Top traders by PnL/volume. Returns rows with at least an address field."""
-        return await self._get(self.cfg.data_api, "/leaderboard", limit=limit, offset=offset, **extra)
+        return await self._get(self.cfg.data_api, "/v1/leaderboard", limit=limit, offset=offset, **extra)
 
     async def trades(self, wallet: str, limit: int = 500, offset: int = 0, **extra: Any) -> list[dict]:
         return await self._get(
-            self.cfg.data_api, "/trades", user=wallet, limit=limit, offset=offset, **extra
+            self.cfg.data_api, "/v1/trades", user=wallet, limit=limit, offset=offset, **extra
         )
 
     async def activity(
@@ -100,10 +100,10 @@ class PolymarketClient:
             params["end"] = end
         if type is not None:
             params["type"] = type
-        return await self._get(self.cfg.data_api, "/activity", **params)
+        return await self._get(self.cfg.data_api, "/v1/activity", **params)
 
     async def positions(self, wallet: str, **extra: Any) -> list[dict]:
-        return await self._get(self.cfg.data_api, "/positions", user=wallet, **extra)
+        return await self._get(self.cfg.data_api, "/v1/positions", user=wallet, **extra)
 
     async def all_trades(self, wallet: str, page: int = 500, hard_cap: int = 50_000) -> list[dict]:
         """Page through a wallet's full trade history via offset pagination."""
