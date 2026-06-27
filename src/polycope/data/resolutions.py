@@ -7,6 +7,7 @@ resolutions are the supervised labels for the whole pipeline.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -15,6 +16,25 @@ from ..schema import MARKET_COLUMNS
 from .client import PolymarketClient
 from .ingest import _first
 from .store import write_parquet
+
+
+def _to_ts(value: Any) -> int:
+    """Coerce an int epoch-seconds or ISO-8601 string to an int Unix timestamp."""
+    if not value:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        pass
+    try:
+        dt = datetime.fromisoformat(str(value).rstrip("Z").replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except ValueError:
+        return 0
 
 
 def _winning_outcome(raw: dict) -> int | float:
@@ -48,8 +68,8 @@ def normalize_market(raw: dict) -> dict:
     return {
         "market_id": str(_first(raw, ("conditionId", "condition_id", "id", "marketId"), "")),
         "title": str(_first(raw, ("question", "title", "slug"), "")),
-        "created_ts": int(_first(raw, ("createdTs", "startDate", "created_at", "startTs"), 0) or 0),
-        "end_ts": int(_first(raw, ("endTs", "endDate", "end_at", "closedTime"), 0) or 0),
+        "created_ts": _to_ts(_first(raw, ("createdTs", "startDate", "created_at", "startTs"), 0)),
+        "end_ts": _to_ts(_first(raw, ("endTs", "endDate", "end_at", "closedTime"), 0)),
         "resolved": bool(resolved) and not (isinstance(win, float) and pd.isna(win)),
         "winning_outcome": win,
         "duration_bucket": "",  # filled in by features.trades.add_duration_bucket
