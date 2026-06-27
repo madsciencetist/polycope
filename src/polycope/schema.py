@@ -41,6 +41,7 @@ POSITION_COLUMNS = [
     "cash_in",             # total spent on BUYs
     "cash_out",            # total received on SELLs
     "entry_ts",            # ts of first BUY
+    "end_ts",              # ts of market resolution (from markets table)
     "resolved",
     "won",                 # bool: did the held outcome pay out
     "held_to_resolution",  # bool: net_shares > 0 at resolution

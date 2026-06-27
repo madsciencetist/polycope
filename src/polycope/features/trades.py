@@ -70,10 +70,11 @@ def build_positions(trades: pd.DataFrame, markets: pd.DataFrame) -> pd.DataFrame
     g["entry_ts"] = g["entry_ts"].replace(np.inf, 0).astype("int64")
 
     # Attach resolution labels.
-    mk = markets[["market_id", "resolved", "winning_outcome", "duration_bucket"]].copy()
+    mk = markets[["market_id", "resolved", "winning_outcome", "duration_bucket", "end_ts"]].copy()
     g = g.merge(mk, on="market_id", how="left")
     g["resolved"] = g["resolved"].fillna(False).astype(bool)
     g["duration_bucket"] = g["duration_bucket"].fillna("days")
+    g["end_ts"] = g["end_ts"].fillna(0).astype("int64")
 
     g["won"] = g["resolved"] & (g["winning_outcome"] == g["outcome_index"])
     g["held_to_resolution"] = g["resolved"] & (g["net_shares"] > _EPS)

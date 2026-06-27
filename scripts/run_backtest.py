@@ -15,9 +15,7 @@ import argparse
 
 from polycope.backtest.engine import BacktestConfig, run_backtest
 from polycope.backtest.report import format_report
-from polycope.features.skill import trader_metrics
 from polycope.features.trades import build_positions
-from polycope.model.ranking import rank_traders, top_wallets
 from polycope.model.validate import evaluate_oos
 from polycope.pipeline import load_dataset
 
@@ -48,11 +46,16 @@ def main(synthetic: bool, top_k: int, min_bets: int) -> int:
     print(f"\nverdict: {verdict} — EB cohort {'beats' if verdict=='PASS' else 'does NOT beat'} "
           "the population out-of-sample.")
 
-    # ---- 2. Friction-aware backtest on the full history ----
-    ranked = rank_traders(trader_metrics(positions), min_bets=min_bets)
-    wallets = top_wallets(ranked, top_k, require_eligible=True)
-    result = run_backtest(trades, positions, markets, wallets, BacktestConfig())
-    print("\n" + format_report(result))
+    # ---- 2. Friction-aware backtest (test window, train-derived wallets) ----
+    # Wallet selection uses only training data (same cohort as OOS validation).
+    # Simulated trades are restricted to the test window so no training-period
+    # signal is replayed.
+    wallets = oos["eb_wallets"]
+    cutoff = oos["cutoff_ts"]
+    test_trades = trades[trades["timestamp"].gt(cutoff)]
+    print(f"\n(Backtest: {len(wallets)} wallets, {len(test_trades)} test-window signals)")
+    result = run_backtest(test_trades, positions, markets, wallets, BacktestConfig())
+    print(format_report(result))
     return 0
 
 

@@ -20,13 +20,25 @@ from ..features.skill import trader_metrics
 from .ranking import rank_traders, top_wallets
 
 
-def time_split(positions: pd.DataFrame, frac: float = 0.6) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split positions into (train, test) at the `frac` quantile of entry_ts."""
+def time_split(
+    positions: pd.DataFrame, frac: float = 0.6
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split positions into (train, test) with no label leakage.
+
+    Train: positions in markets that *resolved* before the cutoff — their ROI labels
+    contain no future information.  end_ts > 0 excludes markets with unknown close times.
+
+    Test: positions *entered* after the cutoff.  Because entry_ts <= end_ts for any
+    trade, no market that appears in training can have a test-window entry, so the
+    two sets are on completely disjoint markets.
+    """
     if positions.empty:
         return positions, positions
-    cutoff = positions["entry_ts"].quantile(frac)
-    train = positions[positions["entry_ts"] <= cutoff].reset_index(drop=True)
-    test = positions[positions["entry_ts"] > cutoff].reset_index(drop=True)
+    cutoff = int(positions["entry_ts"].quantile(frac))
+    train = positions[
+        positions["end_ts"].gt(0) & positions["end_ts"].le(cutoff)
+    ].reset_index(drop=True)
+    test = positions[positions["entry_ts"].gt(cutoff)].reset_index(drop=True)
     return train, test
 
 
@@ -48,6 +60,7 @@ def evaluate_oos(
     positions: pd.DataFrame, top_k: int = 20, min_bets: int = 10, frac: float = 0.6
 ) -> dict:
     """Run the full train/rank/test loop and report cohort comparisons."""
+    cutoff = int(positions["entry_ts"].quantile(frac)) if not positions.empty else 0
     train, test = time_split(positions, frac=frac)
 
     ranked = rank_traders(trader_metrics(train), min_bets=min_bets)
@@ -69,6 +82,7 @@ def evaluate_oos(
     return {
         "n_train_positions": int(len(train)),
         "n_test_positions": int(len(test)),
+        "cutoff_ts": cutoff,
         "population_test_roi": pop_pnl / pop_invested if pop_invested > 0 else np.nan,
         "eb_cohort": _cohort_test_roi(test, eb_cohort),
         "pnl_baseline_cohort": _cohort_test_roi(test, pnl_cohort),
