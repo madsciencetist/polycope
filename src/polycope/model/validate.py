@@ -35,10 +35,16 @@ def time_split(
     if positions.empty:
         return positions, positions
     cutoff = int(positions["entry_ts"].quantile(frac))
-    train = positions[
-        positions["end_ts"].gt(0) & positions["end_ts"].le(cutoff)
+    # Drop API artifacts where a fill is recorded after the market's scheduled
+    # close.  entry_ts > end_ts is physically impossible; these rows would
+    # otherwise appear in both train (end_ts <= cutoff) and test (entry_ts > cutoff).
+    clean = positions[
+        positions["end_ts"].eq(0) | positions["entry_ts"].le(positions["end_ts"])
+    ]
+    train = clean[
+        clean["end_ts"].gt(0) & clean["end_ts"].le(cutoff)
     ].reset_index(drop=True)
-    test = positions[positions["entry_ts"].gt(cutoff)].reset_index(drop=True)
+    test = clean[clean["entry_ts"].gt(cutoff)].reset_index(drop=True)
     return train, test
 
 
