@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     data_api: str = "https://data-api.polymarket.com"
     gamma_api: str = "https://gamma-api.polymarket.com"
+    clob_api: str = "https://clob.polymarket.com"
     data_dir: Path = Path("./data")
 
     max_concurrency: int = 8

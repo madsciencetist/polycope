@@ -1,4 +1,4 @@
-"""Async client for Polymarket's public Data API and Gamma API.
+"""Async client for Polymarket's public Data API, Gamma API, and CLOB API.
 
 Read endpoints require no authentication. We add bounded concurrency, timeouts,
 and retry-with-backoff so bulk ingestion is polite and resilient.
@@ -9,6 +9,7 @@ Endpoints used (see docs https://docs.polymarket.com/api-reference):
             /v1/activity?user=...    full chronological history, timestamp-paginated
             /v1/positions?user=...   current positions (used by the live executor)
   Gamma API /markets                 market metadata + resolution outcomes (labels)
+  CLOB API  /markets/{condition_id}  per-market resolution + token winner flags
 """
 
 from __future__ import annotations
@@ -125,3 +126,20 @@ class PolymarketClient:
     # ---- Gamma API ----
     async def markets(self, limit: int = 100, offset: int = 0, **extra: Any) -> list[dict]:
         return await self._get(self.cfg.gamma_api, "/markets", limit=limit, offset=offset, **extra)
+
+    # ---- CLOB API ----
+    async def clob_market(self, condition_id: str) -> dict | None:
+        """Fetch a single market from the CLOB API. Returns None on 404 (FPMM-only markets)."""
+        try:
+            return await self._get(self.cfg.clob_api, f"/markets/{condition_id}")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+
+    async def clob_markets_for_ids(self, condition_ids: list[str]) -> list[dict]:
+        """Fetch CLOB resolution data for a set of condition IDs (skips 404s)."""
+        results = await asyncio.gather(
+            *(self.clob_market(cid) for cid in condition_ids), return_exceptions=True
+        )
+        return [r for r in results if isinstance(r, dict)]

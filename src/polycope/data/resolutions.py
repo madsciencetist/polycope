@@ -76,25 +76,41 @@ def normalize_market(raw: dict) -> dict:
     }
 
 
+def normalize_clob_market(raw: dict) -> dict:
+    """Map a CLOB /markets/{condition_id} response to the canonical market row."""
+    tokens = raw.get("tokens", [])
+    win_idx = next((i for i, t in enumerate(tokens) if t.get("winner")), None)
+    resolved = bool(raw.get("closed")) and win_idx is not None
+    return {
+        "market_id": str(raw.get("condition_id", "")),
+        "title": str(raw.get("question", "")),
+        "created_ts": 0,  # CLOB API does not expose market open time
+        "end_ts": _to_ts(raw.get("end_date_iso", 0)),
+        "resolved": resolved,
+        "winning_outcome": int(win_idx) if win_idx is not None else float("nan"),
+        "duration_bucket": "",
+    }
+
+
 def markets_to_frame(raw_markets: list[dict]) -> pd.DataFrame:
     rows = [normalize_market(m) for m in raw_markets]
     return pd.DataFrame(rows, columns=MARKET_COLUMNS).reset_index(drop=True)
 
 
-async def ingest_markets(limit: int = 1000, cfg=None, out_path=None, **filters: Any) -> pd.DataFrame:
-    """Page through Gamma /markets and persist the resolutions table."""
-    rows: list[dict] = []
-    offset = 0
+async def ingest_markets(
+    condition_ids: list[str],
+    cfg=None,
+    out_path=None,
+) -> pd.DataFrame:
+    """Fetch resolution data from the CLOB API for the given condition IDs.
+
+    Replaces the old Gamma offset-scan approach. The CLOB API is queried per
+    market and reliably returns winner flags for closed binary markets.
+    """
     async with PolymarketClient(cfg) as client:
-        while len(rows) < limit:
-            batch = await client.markets(limit=min(100, limit - len(rows)), offset=offset, **filters)
-            if not batch:
-                break
-            rows.extend(batch)
-            if len(batch) < 100:
-                break
-            offset += len(batch)
-    df = markets_to_frame(rows)
+        raw = await client.clob_markets_for_ids(condition_ids)
+    rows = [normalize_clob_market(r) for r in raw]
+    df = pd.DataFrame(rows, columns=MARKET_COLUMNS).reset_index(drop=True)
     if out_path is not None:
         write_parquet(df, out_path)
     return df
