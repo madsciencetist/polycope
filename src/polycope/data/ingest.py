@@ -9,6 +9,7 @@ makes the normalizers unit-testable without network access.
 from __future__ import annotations
 
 import asyncio
+import sys
 from typing import Any
 
 import pandas as pd
@@ -65,12 +66,30 @@ def extract_wallets(leaderboard_rows: list[dict]) -> list[str]:
 
 
 async def ingest_wallets(
-    wallets: list[str], cfg=None, out_path=None
+    wallets: list[str],
+    cfg=None,
+    out_path=None,
+    batch_size: int = 100,
 ) -> pd.DataFrame:
-    """Fetch full trade history for each wallet and persist a single trades table."""
+    """Fetch full trade history for each wallet and persist a single trades table.
+
+    Processes wallets in batches so we can print progress and write partial
+    results incrementally rather than holding everything in memory at once.
+    """
     async with PolymarketClient(cfg) as client:
-        results = await asyncio.gather(*(client.all_trades(w) for w in wallets))
-    frames = [trades_to_frame(r) for r in results]
+        frames: list[pd.DataFrame] = []
+        for i in range(0, len(wallets), batch_size):
+            batch = wallets[i : i + batch_size]
+            results = await asyncio.gather(*(client.all_trades(w) for w in batch))
+            batch_frames = [trades_to_frame(r) for r in results]
+            frames.extend(batch_frames)
+            n_trades = sum(len(f) for f in batch_frames)
+            print(
+                f"  wallets {i+1}-{min(i+len(batch), len(wallets))}/{len(wallets)}"
+                f"  +{n_trades} trades",
+                flush=True,
+            )
+
     df = (
         pd.concat(frames, ignore_index=True)
         if any(not f.empty for f in frames)
@@ -82,8 +101,21 @@ async def ingest_wallets(
 
 
 async def ingest_leaderboard(
-    limit: int = 200, cfg=None
+    n: int = 1000,
+    min_pnl: float = 100.0,
+    cfg=None,
 ) -> list[str]:
+    """Fetch wallet addresses from the leaderboard with pagination across all time windows.
+
+    min_pnl filters out dust/bot accounts before we spend API quota on their
+    trade history.  The leaderboard is sorted descending so we stop each window
+    once a page falls below the floor.
+    """
     async with PolymarketClient(cfg) as client:
-        board = await client.leaderboard(limit=limit)
-    return extract_wallets(board)
+        rows = await client.leaderboard_wallets(n=n, min_pnl=min_pnl)
+    wallets = extract_wallets(rows)
+    print(
+        f"leaderboard  n={n}  min_pnl=${min_pnl:,.0f}"
+        f"  -> {len(rows)} qualifying rows  -> {len(wallets)} unique wallets"
+    )
+    return wallets

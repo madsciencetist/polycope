@@ -30,14 +30,20 @@ from ..config import Settings, settings
 # Errors worth retrying: transient network issues and 5xx/429 from the API.
 _RETRYABLE = (httpx.TransportError, httpx.HTTPStatusError)
 
+# The leaderboard endpoint ignores the limit parameter and always returns 50 rows.
+_LEADERBOARD_PAGE_SIZE = 50
+
+# Supported leaderboard time windows, tried in order when building a wide pool.
+_LEADERBOARD_WINDOWS = ("1d", "1w", "1m", "all")
+
 
 class PolymarketClient:
     """Thin async wrapper over the public REST APIs.
 
     Usage:
         async with PolymarketClient() as c:
-            board = await c.leaderboard(limit=100)
-            trades = await c.all_trades(wallet)
+            wallets = await c.leaderboard_wallets(n=1000, min_pnl=1000)
+            trades  = await c.all_trades(wallet)
     """
 
     def __init__(self, cfg: Settings | None = None) -> None:
@@ -76,9 +82,48 @@ class PolymarketClient:
         return await _do()
 
     # ---- Data API ----
-    async def leaderboard(self, limit: int = 100, offset: int = 0, **extra: Any) -> list[dict]:
-        """Top traders by PnL/volume. Returns rows with at least an address field."""
-        return await self._get(self.cfg.data_api, "/v1/leaderboard", limit=limit, offset=offset, **extra)
+
+    async def leaderboard(self, limit: int = 100, offset: int = 0, window: str | None = None, **extra: Any) -> list[dict]:
+        """One page of the leaderboard (API always returns 50 rows regardless of limit)."""
+        params: dict[str, Any] = {"limit": limit, "offset": offset, **extra}
+        if window is not None:
+            params["window"] = window
+        return await self._get(self.cfg.data_api, "/v1/leaderboard", **params)
+
+    async def leaderboard_wallets(
+        self,
+        n: int = 1000,
+        min_pnl: float = 0.0,
+        windows: tuple[str, ...] = _LEADERBOARD_WINDOWS,
+    ) -> list[dict]:
+        """Paginate the leaderboard across multiple time windows and return raw rows.
+
+        Deduplicates by proxyWallet. Stops fetching a window once rows fall below
+        min_pnl (they're sorted descending), so cheap to call with a high n.
+        Returns at most n rows, ordered by first appearance (highest rank first).
+        """
+        seen: dict[str, dict] = {}
+        for window in windows:
+            offset = 0
+            while len(seen) < n:
+                page = await self.leaderboard(offset=offset, window=window)
+                if not page:
+                    break
+                any_above = False
+                for row in page:
+                    pnl = float(row.get("pnl", 0))
+                    if pnl >= min_pnl:
+                        any_above = True
+                        addr = str(row.get("proxyWallet", "")).lower()
+                        if addr and addr not in seen:
+                            seen[addr] = row
+                # Stop this window once all rows in the page are below the floor.
+                if not any_above:
+                    break
+                if len(page) < _LEADERBOARD_PAGE_SIZE:
+                    break
+                offset += _LEADERBOARD_PAGE_SIZE
+        return list(seen.values())[:n]
 
     async def trades(self, wallet: str, limit: int = 500, offset: int = 0, **extra: Any) -> list[dict]:
         return await self._get(

@@ -90,11 +90,25 @@ def rank_traders(metrics: pd.DataFrame, min_bets: int = 1) -> pd.DataFrame:
         )
 
     m = metrics.copy()
-    shrunk, se, grand, _ = eb_gaussian_shrink(
-        m["mean_roi"].to_numpy(), m["std_roi"].to_numpy(), m["n_positions"].to_numpy()
+    m["eligible"] = m["n_bets"] >= min_bets
+
+    # Fit EB parameters on eligible wallets only: including thin wallets inflates
+    # average sampling variance and collapses tau² to zero, hiding real signal.
+    fit_mask = m["eligible"].to_numpy()
+    fit = m[fit_mask]
+
+    # Use winsorized ROI so that a single 100x longshot win doesn't collapse tau².
+    shrunk_fit, se_fit, grand, _ = eb_gaussian_shrink(
+        fit["mean_roi_w"].to_numpy(), fit["std_roi_w"].to_numpy(), fit["n_positions"].to_numpy()
     )
+
+    # Ineligible wallets get the grand mean (maximum shrinkage; they won't be copied).
+    shrunk = np.full(len(m), grand)
+    se_arr = np.zeros(len(m))
+    shrunk[fit_mask] = shrunk_fit
+    se_arr[fit_mask] = se_fit
     m["eb_edge"] = shrunk
-    m["eb_edge_se"] = se
+    m["eb_edge_se"] = se_arr
     m["grand_mean_roi"] = grand
 
     hit, _, _ = eb_beta_binomial(m["wins"].to_numpy(), m["n_bets"].to_numpy())
@@ -106,7 +120,6 @@ def rank_traders(metrics: pd.DataFrame, min_bets: int = 1) -> pd.DataFrame:
     brier_base = max(1e-9, base_rate * (1.0 - base_rate))
     m["brier_skill"] = 1.0 - m["brier"] / brier_base
 
-    m["eligible"] = m["n_bets"] >= min_bets
     # Rank ineligible traders last regardless of edge.
     m["_sort"] = np.where(m["eligible"], m["eb_edge"], -np.inf)
     m = m.sort_values("_sort", ascending=False).drop(columns="_sort").reset_index(drop=True)
