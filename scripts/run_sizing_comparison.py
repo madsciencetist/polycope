@@ -29,16 +29,32 @@ def _calmar(total_return: float, max_dd: float) -> str:
     return f"{total_return / max_dd:.2f}"
 
 
+def _notional_stats(trades: pd.DataFrame, wallets: list[str]) -> dict[str, dict]:
+    """Per-wallet mean and std of bet notional from the supplied trade slice."""
+    buy = trades[trades["side"].eq("BUY") & trades["wallet"].isin(wallets)].copy()
+    if buy.empty or "size" not in buy.columns:
+        return {}
+    buy["_notional"] = buy["price"] * buy["size"]
+    grp = buy.groupby("wallet")["_notional"]
+    means = grp.mean()
+    stds  = grp.std(ddof=1).fillna(0)
+    return {
+        w: {"mean_notional": float(means.get(w, 1.0)), "std_notional": float(stds.get(w, 0.0))}
+        for w in wallets
+    }
+
+
 def main(top_k: int, min_bets: int, synthetic: bool) -> int:
     trades, markets = load_dataset(synthetic=synthetic)
     positions = build_positions(trades, markets)
 
     oos = evaluate_oos(positions, top_k=top_k, min_bets=min_bets)
-    wallets = oos["eb_wallets"]
-    cutoff = oos["cutoff_ts"]
-    test_trades = trades[trades["timestamp"].gt(cutoff)]
+    wallets  = oos["eb_wallets"]
+    cutoff   = oos["cutoff_ts"]
+    test_trades  = trades[trades["timestamp"].gt(cutoff)]
+    train_trades = trades[trades["timestamp"].le(cutoff)]
 
-    # Per-wallet metrics from the training split (needed for variable sizing).
+    # Per-wallet EB metrics from the training split.
     train, _ = time_split(positions)
     ranked = rank_traders(trader_metrics(train), min_bets=min_bets)
     wm = (
@@ -47,27 +63,32 @@ def main(top_k: int, min_bets: int, synthetic: bool) -> int:
         .to_dict("index")
     )
 
+    # Inject training-period notional stats so wallet_normalized uses no test data.
+    for w, stats in _notional_stats(train_trades, wallets).items():
+        wm.setdefault(w, {}).update(stats)
+
     strategies: list[tuple[str, BacktestConfig]] = [
-        ("Fixed 2%",          BacktestConfig(sizing="fixed")),
-        ("EB-weighted",       BacktestConfig(sizing="eb_weighted")),
-        ("Kelly (cap 10%)",   BacktestConfig(sizing="kelly",        max_stake_fraction=0.10)),
-        ("Kelly (cap 5%)",    BacktestConfig(sizing="kelly",        max_stake_fraction=0.05)),
-        ("Proportional",      BacktestConfig(sizing="proportional")),
+        ("Fixed 2%",           BacktestConfig(sizing="fixed")),
+        ("EB-weighted",        BacktestConfig(sizing="eb_weighted")),
+        ("Kelly (cap 10%)",    BacktestConfig(sizing="kelly",             max_stake_fraction=0.10)),
+        ("Kelly (cap 5%)",     BacktestConfig(sizing="kelly",             max_stake_fraction=0.05)),
+        ("Proportional",       BacktestConfig(sizing="proportional")),
+        ("Wallet-normalized",  BacktestConfig(sizing="wallet_normalized")),
     ]
 
     rows = []
     for name, cfg in strategies:
-        r = run_backtest(test_trades, positions, markets, wallets, cfg, wallet_metrics=wm)
+        r  = run_backtest(test_trades, positions, markets, wallets, cfg, wallet_metrics=wm)
         wr = r["win_rate"]
         rows.append(
             {
-                "Strategy":       name,
-                "Return":         f"{r['total_return'] * 100:+.1f}%",
-                "Win rate":       f"{wr * 100:.1f}%" if wr == wr else "n/a",
-                "Max DD":         f"{r['max_drawdown'] * 100:.1f}%",
-                "Calmar":         _calmar(r["total_return"], r["max_drawdown"]),
-                "N copied":       r["n_copied"],
-                "Final equity":   f"${r['final_equity']:,.0f}",
+                "Strategy":     name,
+                "Return":       f"{r['total_return'] * 100:+.1f}%",
+                "Win rate":     f"{wr * 100:.1f}%" if wr == wr else "n/a",
+                "Max DD":       f"{r['max_drawdown'] * 100:.1f}%",
+                "Calmar":       _calmar(r["total_return"], r["max_drawdown"]),
+                "N copied":     r["n_copied"],
+                "Final equity": f"${r['final_equity']:,.0f}",
             }
         )
 
@@ -84,15 +105,14 @@ def main(top_k: int, min_bets: int, synthetic: bool) -> int:
     print("=" * 72)
     print("\nCalmar = total return / max drawdown  (higher = better risk-adjusted)")
 
-    # Per-wallet breakdown for EB-weighted to show where capital concentrated.
-    print("\n--- EB-weighted wallet weights ---")
-    from polycope.backtest.engine import _build_sizing_tables, _signals
-    sig = _signals(test_trades, wallets)
-    eb_w, eb_h, _, eb_raw = _build_sizing_tables(sig, wallets, wm, BacktestConfig(sizing="eb_weighted"))
-    for wallet, w in sorted(eb_w.items(), key=lambda x: -x[1]):
-        edge = wm.get(wallet, {}).get("eb_edge", float("nan"))
-        hit = wm.get(wallet, {}).get("eb_hit", float("nan"))
-        print(f"  {wallet[:12]}...  weight={w:.3f}  eb_edge={edge:.4f}  eb_hit={hit:.3f}")
+    # Show how wallet-normalized conviction varies per-wallet.
+    print("\n--- Training-period notional stats (wallet_normalized inputs) ---")
+    print(f"  {'Wallet':<16}  {'Mean notional':>14}  {'Std notional':>13}  {'CV':>6}")
+    for w in wallets:
+        mu  = wm.get(w, {}).get("mean_notional", float("nan"))
+        sig = wm.get(w, {}).get("std_notional",  float("nan"))
+        cv  = sig / mu if mu else float("nan")
+        print(f"  {w[:14]:<16}  {mu:>14.2f}  {sig:>13.2f}  {cv:>6.2f}")
 
     return 0
 
@@ -100,6 +120,6 @@ def main(top_k: int, min_bets: int, synthetic: bool) -> int:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--synthetic", action="store_true")
-    ap.add_argument("--top-k", type=int, default=15)
+    ap.add_argument("--top-k",    type=int, default=15)
     ap.add_argument("--min-bets", type=int, default=10)
     raise SystemExit(main(**vars(ap.parse_args())))
