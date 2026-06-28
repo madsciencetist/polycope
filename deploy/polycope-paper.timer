@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the Polycope paper-trading cycle weekly
+Documentation=file:///home/andrew/local/polycope/docs/DEPLOYMENT.md
+
+[Timer]
+# Mondays at 06:00 *local* time (systemd OnCalendar uses the system timezone).
+# Append a zone to force one, e.g. "Mon *-*-* 06:00:00 UTC". Weekly cadence.
+OnCalendar=Mon *-*-* 06:00:00
+# If the machine was off at the scheduled time, run as soon as it's back.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

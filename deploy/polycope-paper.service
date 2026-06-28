@@ -1,0 +1,14 @@
+[Unit]
+Description=Polycope weekly paper-trading cycle (ingest -> rank -> paper advance)
+Documentation=file:///home/andrew/local/polycope/docs/DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/andrew/local/polycope
+ExecStart=/home/andrew/local/polycope/scripts/paper_cycle.sh
+# The ingest step fetches a large trade history; give it room (no real-money risk).
+TimeoutStartSec=1h
+# Uncomment to pin a specific interpreter instead of the repo .venv:
+# Environment=POLYCOPE_PYTHON=/home/andrew/local/polycope/.venv/bin/python3
