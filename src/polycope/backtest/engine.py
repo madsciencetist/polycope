@@ -45,7 +45,7 @@ class BacktestConfig:
     max_stake_fraction: float = 0.10  # ceiling for variable-sizing strategies
     latency_slippage: float = 0.01    # added to fill price (prob units) to model late fills
     fee_bps: float = 60.0             # round-trip-ish fee on buy notional, in basis points
-    min_cash: float = 10.0            # don't open a position smaller than this
+    min_cash: float = 1.0             # don't open a position smaller than this
     max_price: float = 0.98           # skip near-certain outcomes (no edge, dust)
     sizing: str = "fixed"             # "fixed" | "eb_weighted" | "kelly" | "proportional" | "wallet_normalized"
     duration_buckets: tuple[str, ...] = field(
