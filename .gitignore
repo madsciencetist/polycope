@@ -11,5 +11,8 @@ data/*.parquet
 data/**/*.parquet
 data/raw/
 data/synthetic/
+# Paper-trading runtime state
+data/*.json
+.claude/
 reports/
 *.png
