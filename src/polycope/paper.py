@@ -144,6 +144,7 @@ def advance_portfolio(
             "outcome_index": int(t.outcome_index),
             "shares": shares,
             "cost": stake,
+            "entry_price": fill,
             "entry_ts": ts,
             "end_ts": int(end_ts),
         })
