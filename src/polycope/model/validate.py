@@ -63,13 +63,20 @@ def _cohort_test_roi(test: pd.DataFrame, wallets: list[str]) -> dict:
 
 
 def evaluate_oos(
-    positions: pd.DataFrame, top_k: int = 20, min_bets: int = 10, frac: float = 0.6
+    positions: pd.DataFrame,
+    top_k: int = 20,
+    min_bets: int = 10,
+    frac: float = 0.6,
+    metric: str = "roi",
 ) -> dict:
-    """Run the full train/rank/test loop and report cohort comparisons."""
+    """Run the full train/rank/test loop and report cohort comparisons.
+
+    `metric` is passed to rank_traders: "roi" (default) or "irr" (capital velocity).
+    """
     cutoff = int(positions["entry_ts"].quantile(frac)) if not positions.empty else 0
     train, test = time_split(positions, frac=frac)
 
-    ranked = rank_traders(trader_metrics(train), min_bets=min_bets)
+    ranked = rank_traders(trader_metrics(train), min_bets=min_bets, metric=metric)
     eb_cohort = top_wallets(ranked, top_k, require_eligible=True)
 
     # Naive leaderboard baseline: rank by raw total PnL on the train window.

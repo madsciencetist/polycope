@@ -10,8 +10,19 @@ def test_time_split_is_disjoint_and_ordered():
     trades, markets, _ = generate(seed=3)
     pos = build_positions(trades, markets)
     train, test = time_split(pos, frac=0.6)
-    assert len(train) + len(test) == len(pos)
-    assert train["entry_ts"].max() <= test["entry_ts"].min()
+
+    # The split is leakage-free, not a partition: train holds positions whose
+    # markets *resolved* before the cutoff, test holds positions *entered* after
+    # it.  Positions entered before but resolving after the cutoff fall in neither
+    # set, so train + test <= all (a gap is expected, not an error).
+    assert len(train) + len(test) <= len(pos)
+
+    # No market may appear in both sets — this is the actual anti-leakage guarantee.
+    assert set(train["market_id"]) & set(test["market_id"]) == set()
+
+    # Train markets resolve no later than the earliest test entry.
+    if len(train) and len(test):
+        assert train["end_ts"].max() <= test["entry_ts"].min()
 
 
 def test_eb_cohort_beats_population_out_of_sample():

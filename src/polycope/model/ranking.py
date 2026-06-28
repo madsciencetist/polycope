@@ -7,7 +7,8 @@ trader's noisy estimate toward the population mean in proportion to how little
 evidence they have.
 
 We produce two shrunk signals and combine them:
-  - eb_edge: James-Stein / Gaussian shrinkage of mean ROI (magnitude of edge)
+  - eb_edge: James-Stein / Gaussian shrinkage of the edge metric (default: winsorized
+             mean ROI; optionally IRR-native daily log-growth via metric="irr")
   - eb_hit:  Beta-Binomial shrinkage of hit rate  (consistency of being right)
 """
 
@@ -73,12 +74,31 @@ def eb_beta_binomial(wins: np.ndarray, ns: np.ndarray) -> tuple[np.ndarray, floa
     return posterior, alpha0, beta0
 
 
-def rank_traders(metrics: pd.DataFrame, min_bets: int = 1) -> pd.DataFrame:
+# Maps the metric name to the (mean_col, std_col) fed into Gaussian shrinkage.
+_METRIC_COLUMNS = {
+    "roi": ("mean_roi_w", "std_roi_w"),       # default: winsorized per-bet ROI
+    "irr": ("mean_growth_w", "std_growth_w"),  # experimental: daily log-growth (capital velocity)
+}
+
+
+def rank_traders(
+    metrics: pd.DataFrame, min_bets: int = 1, metric: str = "roi"
+) -> pd.DataFrame:
     """Attach shrunk skill estimates and a ranking. Sorted best-first.
 
     `min_bets` flags traders with too little evidence (kept but marked
     `eligible=False` so callers can require a minimum track record).
+
+    `metric` selects what eb_edge measures:
+      - "roi" (default): winsorized per-bet ROI — edge per dollar, time-agnostic.
+      - "irr":           per-bet daily log-growth — rewards fast capital recycling.
+                         Experimental; only helps when the bankroll is the binding
+                         constraint.  See features.skill for the caveats.
+    The output column is named eb_edge either way, so downstream code is unchanged.
     """
+    if metric not in _METRIC_COLUMNS:
+        raise ValueError(f"unknown metric {metric!r}; expected one of {list(_METRIC_COLUMNS)}")
+    mean_col, std_col = _METRIC_COLUMNS[metric]
     if metrics.empty:
         return metrics.assign(
             eb_edge=pd.Series(dtype=float),
@@ -97,9 +117,9 @@ def rank_traders(metrics: pd.DataFrame, min_bets: int = 1) -> pd.DataFrame:
     fit_mask = m["eligible"].to_numpy()
     fit = m[fit_mask]
 
-    # Use winsorized ROI so that a single 100x longshot win doesn't collapse tau².
+    # Use winsorized metric so a single 100x longshot win doesn't collapse tau².
     shrunk_fit, se_fit, grand, _ = eb_gaussian_shrink(
-        fit["mean_roi_w"].to_numpy(), fit["std_roi_w"].to_numpy(), fit["n_positions"].to_numpy()
+        fit[mean_col].to_numpy(), fit[std_col].to_numpy(), fit["n_positions"].to_numpy()
     )
 
     # Ineligible wallets get the grand mean (maximum shrinkage; they won't be copied).

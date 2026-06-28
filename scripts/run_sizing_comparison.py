@@ -44,11 +44,11 @@ def _notional_stats(trades: pd.DataFrame, wallets: list[str]) -> dict[str, dict]
     }
 
 
-def main(top_k: int, min_bets: int, synthetic: bool) -> int:
+def main(top_k: int, min_bets: int, synthetic: bool, metric: str) -> int:
     trades, markets = load_dataset(synthetic=synthetic)
     positions = build_positions(trades, markets)
 
-    oos = evaluate_oos(positions, top_k=top_k, min_bets=min_bets)
+    oos = evaluate_oos(positions, top_k=top_k, min_bets=min_bets, metric=metric)
     wallets  = oos["eb_wallets"]
     cutoff   = oos["cutoff_ts"]
     test_trades  = trades[trades["timestamp"].gt(cutoff)]
@@ -56,7 +56,7 @@ def main(top_k: int, min_bets: int, synthetic: bool) -> int:
 
     # Per-wallet EB metrics from the training split.
     train, _ = time_split(positions)
-    ranked = rank_traders(trader_metrics(train), min_bets=min_bets)
+    ranked = rank_traders(trader_metrics(train), min_bets=min_bets, metric=metric)
     wm = (
         ranked[ranked["wallet"].isin(wallets)]
         .set_index("wallet")[["eb_edge", "eb_hit"]]
@@ -97,7 +97,7 @@ def main(top_k: int, min_bets: int, synthetic: bool) -> int:
     print(f"\nOOS split: {oos['n_train_positions']} train positions / "
           f"{oos['n_test_positions']} test positions  "
           f"(cutoff ts={cutoff})")
-    print(f"Copy list: {len(wallets)} wallets (top-{top_k} by EB edge, min {min_bets} bets)\n")
+    print(f"Copy list: {len(wallets)} wallets (top-{top_k} by EB {metric} edge, min {min_bets} bets)\n")
     print("=" * 72)
     print("SIZING STRATEGY COMPARISON  (test window, train-derived wallet list)")
     print("=" * 72)
@@ -122,4 +122,6 @@ if __name__ == "__main__":
     ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--top-k",    type=int, default=15)
     ap.add_argument("--min-bets", type=int, default=10)
+    ap.add_argument("--metric",   choices=["roi", "irr"], default="roi",
+                    help="Edge metric for wallet ranking: roi (default) or irr (capital velocity)")
     raise SystemExit(main(**vars(ap.parse_args())))
