@@ -13,6 +13,9 @@ Typical weekly loop:
 First run starts the clock "now" (copies only future trades). To seed from recent
 history for an immediate signal:
   python scripts/run_paper.py --replay-days 30 --reset
+
+Monitor any time without advancing (shows per-wallet attribution):
+  python scripts/run_paper.py --status
 """
 
 from __future__ import annotations
@@ -27,10 +30,41 @@ from polycope.features.trades import add_duration_bucket
 from polycope.model.ranking import rank_traders, top_wallets
 from polycope.features.skill import trader_metrics
 from polycope.features.trades import build_positions
-from polycope.paper import PaperConfig, advance_portfolio, new_state, report
+from polycope.paper import (
+    PaperConfig,
+    advance_portfolio,
+    new_state,
+    report,
+    wallet_attribution,
+)
 from polycope.pipeline import load_dataset
 
 STATE_PATH = settings.data_dir / "paper_state.json"
+
+
+def _pct(x: float) -> str:
+    return f"{x*100:+.2f}%" if x == x else "n/a"
+
+
+def print_report(state: dict, rep: dict, top_n: int = 20) -> None:
+    print("\n" + "=" * 64)
+    print("PAPER PORTFOLIO")
+    print("=" * 64)
+    print(f"equity           : ${rep['equity']:,.2f}  ({_pct(rep['total_return'])})")
+    print(f"cash             : ${rep['cash']:,.2f}")
+    print(f"open positions   : {rep['open_positions']}  (${rep['open_cost']:,.2f} at risk, marked at cost)")
+    print(f"settled          : {rep['n_settled']}")
+    print(f"realized PnL     : ${rep['realized_pnl']:,.2f}  (pooled ROI {_pct(rep['pooled_roi'])})")
+    print(f"win rate         : {_pct(rep['win_rate'])}")
+
+    attr = wallet_attribution(state)
+    if attr:
+        print("\n--- per-wallet attribution (by realized PnL) ---")
+        print(f"  {'wallet':<16} {'realized':>10} {'roi':>8} {'settled':>8} {'win%':>6} {'open':>5} {'open$':>10}")
+        for r in attr[:top_n]:
+            w = (r["wallet"] or "(untracked)")[:14]
+            print(f"  {w:<16} {r['realized_pnl']:>+10.2f} {_pct(r['roi']):>8} "
+                  f"{r['settled']:>8} {_pct(r['win_rate']):>6} {r['open']:>5} {r['open_cost']:>10.2f}")
 
 
 def _load_copylist(top_k: int, min_bets: int) -> list[str]:
@@ -45,9 +79,19 @@ def _load_copylist(top_k: int, min_bets: int) -> list[str]:
 
 
 def main(top_k: int, min_bets: int, bankroll: float, fee_bps: float,
-         replay_days: int, reset: bool) -> int:
+         replay_days: int, reset: bool, status: bool) -> int:
     settings.ensure_dirs()
     cfg = PaperConfig(initial_bankroll=bankroll, fee_bps=fee_bps)
+
+    # --status: just read and display the saved portfolio; do not fetch or advance.
+    if status:
+        if not STATE_PATH.exists():
+            print(f"No paper state at {STATE_PATH} — run a cycle first.")
+            return 1
+        state = json.loads(STATE_PATH.read_text())
+        print_report(state, report(state))
+        print(f"\nstate: {STATE_PATH}  (last_ts={state['last_ts']})")
+        return 0
 
     trades = read_parquet(settings.raw_dir / "trades.parquet")
     markets = read_parquet(settings.raw_dir / "markets.parquet")
@@ -73,19 +117,8 @@ def main(top_k: int, min_bets: int, bankroll: float, fee_bps: float,
     state, rep = advance_portfolio(state, trades, markets, wallets, cfg)
     STATE_PATH.write_text(json.dumps(state))
 
-    def pct(x):
-        return f"{x*100:+.2f}%" if x == x else "n/a"
-
-    print("\n" + "=" * 56)
-    print("PAPER PORTFOLIO")
-    print("=" * 56)
-    print(f"equity           : ${rep['equity']:,.2f}  ({pct(rep['total_return'])})")
-    print(f"cash             : ${rep['cash']:,.2f}")
-    print(f"open positions   : {rep['open_positions']}  (${rep['open_cost']:,.2f} at risk)")
-    print(f"settled          : {rep['n_settled']}")
-    print(f"realized PnL     : ${rep['realized_pnl']:,.2f}  (pooled ROI {pct(rep['pooled_roi'])})")
-    print(f"win rate         : {pct(rep['win_rate'])}")
-    print(f"state -> {STATE_PATH}")
+    print_report(state, rep)
+    print(f"\nstate -> {STATE_PATH}")
     return 0
 
 
@@ -98,4 +131,6 @@ if __name__ == "__main__":
     ap.add_argument("--replay-days", type=int, default=0,
                     help="seed from this many days of recent history on init (0 = start now)")
     ap.add_argument("--reset", action="store_true", help="discard existing paper state and reinitialize")
+    ap.add_argument("--status", action="store_true",
+                    help="show the saved portfolio (incl. per-wallet attribution) without advancing")
     raise SystemExit(main(**vars(ap.parse_args())))

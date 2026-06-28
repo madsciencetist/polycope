@@ -73,6 +73,7 @@ def _settle(state: dict, mk: dict[str, dict], upto: int) -> None:
             payout = p["shares"] if won else 0.0
             state["cash"] += payout
             state["ledger"].append({
+                "wallet": p.get("wallet", ""),
                 "market_id": p["market_id"],
                 "outcome_index": p["outcome_index"],
                 "cost": p["cost"],
@@ -138,6 +139,7 @@ def advance_portfolio(
         res = mk.get(str(t.market_id))
         end_ts = res["end_ts"] if res else 0
         state["open"].append({
+            "wallet": str(t.wallet).lower(),
             "market_id": str(t.market_id),
             "outcome_index": int(t.outcome_index),
             "shares": shares,
@@ -176,3 +178,43 @@ def report(state: dict) -> dict:
         "win_rate": wins / len(ledger) if ledger else float("nan"),
         "last_ts": state["last_ts"],
     }
+
+
+def wallet_attribution(state: dict) -> list[dict]:
+    """Per-wallet performance: realized PnL/ROI on settled copies + open exposure.
+
+    Sorted by realized PnL (best first) so you can see which copied traders are
+    actually carrying the portfolio. Wallets are only present if state was produced
+    after wallet-tracking was added (older ledgers attribute to "").
+    """
+    agg: dict[str, dict] = {}
+    for l in state["ledger"]:
+        a = agg.setdefault(l.get("wallet", ""), {
+            "settled": 0, "wins": 0, "invested": 0.0, "pnl": 0.0,
+            "open": 0, "open_cost": 0.0,
+        })
+        a["settled"] += 1
+        a["wins"] += 1 if l["payout"] > 0 else 0
+        a["invested"] += l["cost"]
+        a["pnl"] += l["pnl"]
+    for p in state["open"]:
+        a = agg.setdefault(p.get("wallet", ""), {
+            "settled": 0, "wins": 0, "invested": 0.0, "pnl": 0.0,
+            "open": 0, "open_cost": 0.0,
+        })
+        a["open"] += 1
+        a["open_cost"] += p["cost"]
+
+    rows = []
+    for w, a in agg.items():
+        rows.append({
+            "wallet": w,
+            "settled": a["settled"],
+            "win_rate": a["wins"] / a["settled"] if a["settled"] else float("nan"),
+            "realized_pnl": a["pnl"],
+            "roi": a["pnl"] / a["invested"] if a["invested"] > 0 else float("nan"),
+            "open": a["open"],
+            "open_cost": a["open_cost"],
+        })
+    rows.sort(key=lambda r: r["realized_pnl"], reverse=True)
+    return rows
