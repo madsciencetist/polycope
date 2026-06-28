@@ -21,7 +21,9 @@ from .ranking import rank_traders, top_wallets
 
 
 def time_split(
-    positions: pd.DataFrame, frac: float = 0.6
+    positions: pd.DataFrame,
+    frac: float = 0.6,
+    cutoff_ts: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split positions into (train, test) with no label leakage.
 
@@ -31,10 +33,16 @@ def time_split(
     Test: positions *entered* after the cutoff.  Because entry_ts <= end_ts for any
     trade, no market that appears in training can have a test-window entry, so the
     two sets are on completely disjoint markets.
+
+    `cutoff_ts`: explicit Unix timestamp to use as the split boundary.  When None,
+    the boundary is the `frac` quantile of entry_ts (the original default behaviour).
+    A fixed calendar date avoids the quantile collapsing to a recent date when the
+    active-wallet trade history is compressed by the API offset cap.
     """
     if positions.empty:
         return positions, positions
-    cutoff = int(positions["entry_ts"].quantile(frac))
+    if cutoff_ts is None:
+        cutoff_ts = int(positions["entry_ts"].quantile(frac))
     # Drop API artifacts where a fill is recorded after the market's scheduled
     # close.  entry_ts > end_ts is physically impossible; these rows would
     # otherwise appear in both train (end_ts <= cutoff) and test (entry_ts > cutoff).
@@ -42,9 +50,9 @@ def time_split(
         positions["end_ts"].eq(0) | positions["entry_ts"].le(positions["end_ts"])
     ]
     train = clean[
-        clean["end_ts"].gt(0) & clean["end_ts"].le(cutoff)
+        clean["end_ts"].gt(0) & clean["end_ts"].le(cutoff_ts)
     ].reset_index(drop=True)
-    test = clean[clean["entry_ts"].gt(cutoff)].reset_index(drop=True)
+    test = clean[clean["entry_ts"].gt(cutoff_ts)].reset_index(drop=True)
     return train, test
 
 
@@ -68,13 +76,17 @@ def evaluate_oos(
     min_bets: int = 10,
     frac: float = 0.6,
     metric: str = "roi",
+    cutoff_ts: int | None = None,
 ) -> dict:
     """Run the full train/rank/test loop and report cohort comparisons.
 
     `metric` is passed to rank_traders: "roi" (default) or "irr" (capital velocity).
+    `cutoff_ts`: explicit Unix timestamp split boundary; falls back to `frac` quantile
+    when None.
     """
-    cutoff = int(positions["entry_ts"].quantile(frac)) if not positions.empty else 0
-    train, test = time_split(positions, frac=frac)
+    if not positions.empty and cutoff_ts is None:
+        cutoff_ts = int(positions["entry_ts"].quantile(frac))
+    train, test = time_split(positions, frac=frac, cutoff_ts=cutoff_ts)
 
     ranked = rank_traders(trader_metrics(train), min_bets=min_bets, metric=metric)
     eb_cohort = top_wallets(ranked, top_k, require_eligible=True)
@@ -95,7 +107,7 @@ def evaluate_oos(
     return {
         "n_train_positions": int(len(train)),
         "n_test_positions": int(len(test)),
-        "cutoff_ts": cutoff,
+        "cutoff_ts": cutoff_ts or 0,
         "population_test_roi": pop_pnl / pop_invested if pop_invested > 0 else np.nan,
         "eb_cohort": _cohort_test_roi(test, eb_cohort),
         "pnl_baseline_cohort": _cohort_test_roi(test, pnl_cohort),
